@@ -16,7 +16,7 @@ A rarity list package for **BallsDex V3**. Players can view the rarity list of c
 
 ### 1 — Important Notes
 
-- You may change the items per page in the code to suit your dex better - it's defaulted at 2.
+You may change the items per page in the code to suit your dex better - it's defaulted at 2.
 
 ### 2 — Configure extra.toml
 
