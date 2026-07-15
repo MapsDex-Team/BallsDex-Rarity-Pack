@@ -1,4 +1,5 @@
 import logging
+from itertools import groupby
 from typing import TYPE_CHECKING, List
 
 import discord
@@ -95,16 +96,29 @@ class Rarity(commands.Cog):
     def __init__(self, bot: "BallsDexBot"):
         self.bot = bot
 
-    @staticmethod
-    def _is_special_active(special) -> bool:
-        return (
-            (special.start_date or timezone.datetime.min.replace(tzinfo=timezone.get_current_timezone()))
-            <= timezone.now()
-            <= (special.end_date or timezone.datetime.max.replace(tzinfo=timezone.get_current_timezone()))
-        )
+    def _get_special_line(self, special) -> str:
+        if not special.emoji:
+            emoji_text = "N/A"
+        else:
+            try:
+                emoji = self.bot.get_emoji(int(special.emoji))
+            except (TypeError, ValueError):
+                emoji_text = special.emoji
+            else:
+                emoji_text = str(emoji) if emoji else "N/A"
 
-    @staticmethod
-    def _format_percentage(value: float) -> str:
+        return f"\u200b ⋄ {emoji_text} {special.name}"
+
+    def _is_special_spawnable(self, special) -> bool:
+        start_date = special.start_date or timezone.datetime.min.replace(
+            tzinfo=timezone.get_current_timezone()
+        )
+        end_date = special.end_date or timezone.datetime.max.replace(
+            tzinfo=timezone.get_current_timezone()
+        )
+        return not special.hidden and special.rarity > 0 and start_date <= timezone.now() <= end_date
+
+    def _format_percentage(self, value: float) -> str:
         percentage = value * 100
         if percentage == 0:
             return "0%"
@@ -112,22 +126,20 @@ class Rarity(commands.Cog):
             return f"{percentage:.2f}".rstrip("0").rstrip(".") + "%"
         return f"{percentage:.4f}".rstrip("0").rstrip(".") + "%"
 
-    def _format_special_emoji(self, special) -> str:
-        if not special.emoji:
-            return "N/A"
+    def _build_rarity_tiers(self, collectibles):
+        rarity_to_collectibles = {}
+        tier_by_collectible = {}
+        tier_num = 1
 
-        try:
-            emoji = self.bot.get_emoji(int(special.emoji))
-        except (TypeError, ValueError):
-            return special.emoji
+        sorted_collectibles = sorted(collectibles, key=lambda c: c.rarity)
+        for _, group in groupby(sorted_collectibles, key=lambda c: c.rarity):
+            group_collectibles = list(group)
+            rarity_to_collectibles[tier_num] = group_collectibles
+            for collectible in group_collectibles:
+                tier_by_collectible[collectible.pk] = tier_num
+            tier_num += len(group_collectibles)
 
-        return str(emoji) if emoji else "N/A"
-
-    def _get_special_line(self, special) -> str:
-        return f"\u200b ⋄ {self._format_special_emoji(special)} {special.name}"
-
-    def _is_special_spawnable(self, special) -> bool:
-        return not special.hidden and special.rarity > 0 and self._is_special_active(special)
+        return rarity_to_collectibles, tier_by_collectible
 
     @app_commands.describe(
         specials="Show the enabled specials list",
@@ -174,8 +186,6 @@ class Rarity(commands.Cog):
                 )
                 return
 
-            active_specials = [x for x in special_cache.values() if self._is_special_active(x)]
-
             if special:
                 if not self._is_special_spawnable(special):
                     await interaction.followup.send(
@@ -197,7 +207,7 @@ class Rarity(commands.Cog):
                 return
 
             if specials:
-                visible_specials = [x for x in active_specials if self._is_special_spawnable(x)]
+                visible_specials = [x for x in special_cache.values() if self._is_special_spawnable(x)]
 
                 if not visible_specials:
                     await interaction.followup.send("No active specials are available.", ephemeral=True)
@@ -281,23 +291,9 @@ class Rarity(commands.Cog):
                 )
                 return
 
-            rarities = [c.rarity for c in enabled_collectibles]
-            min_rarity = min(rarities) if rarities else 1.0
-            max_rarity = max(rarities) if rarities else 1.0
-
-            if max_rarity > min_rarity:
-                multiplier = 99.0 / (max_rarity - min_rarity)
-            else:
-                multiplier = 1.0
-
-            rarity_to_collectibles = {}
-            for c in enabled_collectibles:
-                if max_rarity > min_rarity:
-                    tier_num = int((c.rarity - min_rarity) * multiplier + 1.5)
-                else:
-                    tier_num = 1
-                tier_num = max(1, tier_num)
-                rarity_to_collectibles.setdefault(tier_num, []).append(c)
+            rarity_to_collectibles, tier_by_collectible = self._build_rarity_tiers(
+                enabled_collectibles
+            )
 
             if countryball:
                 target_ball = countryball
@@ -308,11 +304,13 @@ class Rarity(commands.Cog):
                     )
                     return
 
-                if max_rarity > min_rarity:
-                    tier_num = int((target_ball.rarity - min_rarity) * multiplier + 1.5)
-                else:
-                    tier_num = 1
-                tier_num = max(1, tier_num)
+                tier_num = tier_by_collectible.get(target_ball.pk)
+                if tier_num is None:
+                    await interaction.followup.send(
+                        f"That {settings.collectible_name} is not included in the rarity list.",
+                        ephemeral=True,
+                    )
+                    return
                 collectible_name = f"\u200b ⋄ {self.bot.get_emoji(target_ball.emoji_id) or 'N/A'} {target_ball.country}"
 
                 embed = discord.Embed(title=balls_rarity_list_title, color=discord.Color.blurple())
