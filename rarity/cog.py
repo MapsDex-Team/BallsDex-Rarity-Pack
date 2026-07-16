@@ -1,11 +1,12 @@
 import logging
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 from django.utils import timezone
 
+from ballsdex.core.utils.menus import ListSource, Menu, TextFormatter
 from ballsdex.core.utils.transformers import BallEnabledTransform, SpecialEnabledTransform
 from bd_models.models import balls, specials as special_cache
 
@@ -18,73 +19,21 @@ log = logging.getLogger("ballsdex.packages.rarity")
 ITEMS_PER_PAGE = 2 # How many tiers are shown on a page
 # INTEGER
 
-class EmbedPaginator(discord.ui.View):
+
+class RarityView(discord.ui.LayoutView):
     """A simple embed paginator for Discord."""
 
-    def __init__(self, embeds: List[discord.Embed], user_id: int, compact: bool = False):
-        super().__init__(timeout=180)
-        self.embeds = embeds
-        self.user_id = user_id
-        self.compact = compact
-        self.page = 0
-        self.message = None
-        self.update_buttons()
+    def __init__(self, interaction: discord.Interaction, **kwargs):
+        super().__init__(**kwargs)
+        self.invoker_id = interaction.user.id
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message("You cannot use this button.", ephemeral=True)
+        if interaction.user.id != self.invoker_id:
+            await interaction.response.send_message(
+                "You cannot use this button.", ephemeral=True
+            )
             return False
         return True
-
-    def update_buttons(self):
-        """Update button states based on current page."""
-        self.first_page.disabled = self.page == 0
-        self.prev_page.disabled = self.page == 0
-        self.next_page.disabled = self.page == len(self.embeds) - 1
-        self.last_page.disabled = self.page == len(self.embeds) - 1
-
-    async def on_timeout(self):
-        for item in self.children:
-            item.disabled = True
-        if self.message:
-            try:
-                await self.message.edit(view=self)
-            except discord.HTTPException:
-                pass
-            except Exception:
-                log.exception("Could not disable rarity view on timeout")
-            finally:
-                self.stop()
-
-    @discord.ui.button(label="≪", style=discord.ButtonStyle.grey)
-    async def first_page(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.page = 0
-        self.update_buttons()
-        await interaction.response.edit_message(embed=self.embeds[self.page], view=self)
-
-    @discord.ui.button(label="Back", style=discord.ButtonStyle.blurple)
-    async def prev_page(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.page = max(0, self.page - 1)
-        self.update_buttons()
-        await interaction.response.edit_message(embed=self.embeds[self.page], view=self)
-
-    @discord.ui.button(label="Next", style=discord.ButtonStyle.blurple)
-    async def next_page(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.page = min(len(self.embeds) - 1, self.page + 1)
-        self.update_buttons()
-        await interaction.response.edit_message(embed=self.embeds[self.page], view=self)
-
-    @discord.ui.button(label="≫", style=discord.ButtonStyle.grey)
-    async def last_page(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.page = len(self.embeds) - 1
-        self.update_buttons()
-        await interaction.response.edit_message(embed=self.embeds[self.page], view=self)
-
-    @discord.ui.button(label="Quit", style=discord.ButtonStyle.red)
-    async def quit(self, interaction: discord.Interaction, button: discord.ui.Button):
-        for item in self.children:
-            item.disabled = True
-        await interaction.response.edit_message(view=self)
 
 
 class Rarity(commands.Cog):
@@ -128,6 +77,53 @@ class Rarity(commands.Cog):
 
     def _is_special_spawnable(self, special) -> bool:
         return not special.hidden and special.rarity > 0 and self._is_special_active(special)
+
+    async def _send_text_menu(
+        self,
+        interaction: discord.Interaction["BallsDexBot"],
+        title: str,
+        entries: list[tuple[str, str]],
+    ):
+        pages = []
+        page_entries = []
+
+        for entry in entries:
+            name, _ = entry
+            if page_entries and (
+                len(page_entries) >= ITEMS_PER_PAGE or name == page_entries[-1][0]
+            ):
+                pages.append(page_entries)
+                page_entries = []
+            page_entries.append(entry)
+
+        if page_entries:
+            pages.append(page_entries)
+
+        page_texts = []
+        total_pages = len(pages)
+        for i, page_entries in enumerate(pages):
+            text = ""
+            for name, value in page_entries:
+                text += f"### {name}\n{value}\n"
+            text += f"\n-# Page {i + 1}/{total_pages}"
+            page_texts.append(text)
+
+        view = RarityView(interaction)
+        container = discord.ui.Container(
+            discord.ui.TextDisplay(content=f"# {title}"),
+            discord.ui.Separator(visible=True, spacing=discord.SeparatorSpacing.large),
+        )
+        text_display = discord.ui.TextDisplay("")
+        container.add_item(text_display)
+        view.add_item(container)
+        menu = Menu(
+            self.bot,
+            view,
+            ListSource(page_texts),
+            TextFormatter(text_display),
+        )
+        await menu.init()
+        await interaction.followup.send(view=view)
 
     @app_commands.describe(
         specials="Show the enabled specials list",
@@ -184,16 +180,13 @@ class Rarity(commands.Cog):
                     )
                     return
 
-                embed = discord.Embed(
-                    title=specials_rarity_list_title,
-                    color=discord.Color.blurple(),
-                )
-                embed.add_field(
-                    name=f"∥ {self._format_percentage(special.rarity)}",
-                    value=self._get_special_line(special),
-                    inline=False,
-                )
-                await interaction.followup.send(embed=embed)
+                text = f"# {specials_rarity_list_title}\n### ∥ {self._format_percentage(special.rarity)}\n{self._get_special_line(special)}\n"
+                view = discord.ui.LayoutView()
+                container = discord.ui.Container()
+                text_display = discord.ui.TextDisplay(text)
+                container.add_item(text_display)
+                view.add_item(container)
+                await interaction.followup.send(view=view)
                 return
 
             if specials:
@@ -239,37 +232,7 @@ class Rarity(commands.Cog):
                     else:
                         all_entries.append((f"∥ {percentage}", names))
 
-                pages = []
-                page_groups = []
-                current_page = []
-
-                for entry in all_entries:
-                    name, _ = entry
-                    if current_page and (
-                        len(current_page) >= ITEMS_PER_PAGE or name == current_page[-1][0]
-                    ):
-                        page_groups.append(current_page)
-                        current_page = []
-                    current_page.append(entry)
-
-                if current_page:
-                    page_groups.append(current_page)
-
-                for page_number, page_entries in enumerate(page_groups, start=1):
-                    embed = discord.Embed(
-                        title=specials_rarity_list_title,
-                        color=discord.Color.blurple(),
-                    )
-                    for name, value in page_entries:
-                        embed.add_field(name=name, value=value, inline=False)
-                    embed.set_footer(text=f"Page {page_number}/{len(page_groups)}")
-                    pages.append(embed)
-
-                if len(pages) == 1:
-                    await interaction.followup.send(embed=pages[0])
-                else:
-                    view = EmbedPaginator(pages, interaction.user.id, compact=True)
-                    view.message = await interaction.followup.send(embed=pages[0], view=view)
+                await self._send_text_menu(interaction, specials_rarity_list_title, all_entries)
                 return
 
             enabled_collectibles = [x for x in balls.values() if x.enabled and x.rarity > 0]
@@ -315,9 +278,13 @@ class Rarity(commands.Cog):
                 tier_num = max(1, tier_num)
                 collectible_name = f"\u200b ⋄ {self.bot.get_emoji(target_ball.emoji_id) or 'N/A'} {target_ball.country}"
 
-                embed = discord.Embed(title=balls_rarity_list_title, color=discord.Color.blurple())
-                embed.add_field(name=f"∥ T{tier_num}", value=collectible_name, inline=False)
-                await interaction.followup.send(embed=embed)
+                text = f"# {balls_rarity_list_title}\n### ∥ T{tier_num}\n{collectible_name}\n"
+                view = discord.ui.LayoutView()
+                container = discord.ui.Container()
+                text_display = discord.ui.TextDisplay(text)
+                container.add_item(text_display)
+                view.add_item(container)
+                await interaction.followup.send(view=view)
                 return
 
             if tier:
@@ -327,44 +294,15 @@ class Rarity(commands.Cog):
 
                 filtered_collectibles = rarity_to_collectibles[tier]
 
-                chunks = []
-                current_chunk = []
-                current_length = 0
-
-                for c in filtered_collectibles:
-                    line = f"\u200b ⋄ {self.bot.get_emoji(c.emoji_id) or 'N/A'} {c.country}\n"
-                    line_length = len(line)
-
-                    if current_length + line_length > 1024:
-                        chunks.append("".join(current_chunk))
-                        current_chunk = [line]
-                        current_length = line_length
-                    else:
-                        current_chunk.append(line)
-                        current_length += line_length
-
-                if current_chunk:
-                    chunks.append("".join(current_chunk))
-
-                if len(chunks) == 1:
-                    embed = discord.Embed(
-                        title=balls_rarity_list_title,
-                        color=discord.Color.blurple(),
-                    )
-                    embed.add_field(name=f"∥ T{tier}", value=chunks[0], inline=False)
-                    await interaction.followup.send(embed=embed)
-                else:
-                    embeds = []
-                    for i, chunk in enumerate(chunks):
-                        embed = discord.Embed(
-                            title=f"{balls_rarity_list_title} - T{tier}",
-                            color=discord.Color.blurple(),
-                        )
-                        embed.add_field(name=f"∥ T{tier}", value=chunk, inline=False)
-                        embed.set_footer(text=f"Page {i+1}/{len(chunks)}")
-                        embeds.append(embed)
-                    view = EmbedPaginator(embeds, interaction.user.id, compact=True)
-                    view.message = await interaction.followup.send(embed=embeds[0], view=view)
+                names = "".join(
+                    f"\u200b ⋄ {self.bot.get_emoji(c.emoji_id) or 'N/A'} {c.country}\n"
+                    for c in filtered_collectibles
+                )
+                await self._send_text_menu(
+                    interaction,
+                    f"{balls_rarity_list_title} - T{tier}",
+                    [(f"∥ T{tier}", names)],
+                )
                 return
 
             all_entries = []
@@ -402,41 +340,11 @@ class Rarity(commands.Cog):
                 else:
                     all_entries.append((f"∥ T{i}", names))
 
-            pages = []
-            page_groups = []
-            current_page = []
-
-            for entry in all_entries:
-                name, _ = entry
-                if current_page and (
-                    len(current_page) >= ITEMS_PER_PAGE or name == current_page[-1][0]
-                ):
-                    page_groups.append(current_page)
-                    current_page = []
-                current_page.append(entry)
-
-            if current_page:
-                page_groups.append(current_page)
-
-            for page_number, page_entries in enumerate(page_groups, start=1):
-                embed = discord.Embed(
-                    title=balls_rarity_list_title,
-                    color=discord.Color.blurple()
-                )
-                for name, value in page_entries:
-                    embed.add_field(name=name, value=value, inline=False)
-                embed.set_footer(text=f"Page {page_number}/{len(page_groups)}")
-                pages.append(embed)
-
-            if not pages:
+            if not all_entries:
                 await interaction.followup.send("No rarity data available.", ephemeral=True)
                 return
 
-            if len(pages) == 1:
-                await interaction.followup.send(embed=pages[0])
-            else:
-                view = EmbedPaginator(pages, interaction.user.id, compact=True)
-                view.message = await interaction.followup.send(embed=pages[0], view=view)
+            await self._send_text_menu(interaction, balls_rarity_list_title, all_entries)
 
         except Exception as e:
             log.error(f"Error in rarity command: {e}", exc_info=True)
