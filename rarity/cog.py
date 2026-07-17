@@ -19,7 +19,6 @@ log = logging.getLogger("ballsdex.packages.rarity")
 ITEMS_PER_PAGE = 2 # How many tiers are shown on a page
 # INTEGER
 
-
 class RarityView(discord.ui.LayoutView):
     """A simple embed paginator for Discord."""
 
@@ -140,7 +139,7 @@ class Rarity(commands.Cog):
         reverse: bool = False,
     ):
         """
-        Show the rarity list of the collectibles
+        Show the rarity list of the dex
         
         Parameters
         ----------
@@ -160,7 +159,7 @@ class Rarity(commands.Cog):
             
             from settings.models import settings
 
-            balls_rarity_list_title = f"{settings.plural_collectible_name.title()} Rarity List"
+            balls_rarity_list_title = f"{settings.bot_name} Rarity List"
             specials_rarity_list_title = "Specials Rarity List"
             
             if sum(parameter is not None for parameter in (countryball, special, tier)) + int(specials) > 1:
@@ -346,12 +345,6 @@ class Rarity(commands.Cog):
 
             await self._send_text_menu(interaction, balls_rarity_list_title, all_entries)
 
-        except Exception as e:
-            log.error(f"Error in rarity command: {e}", exc_info=True)
-            try:
-                await interaction.followup.send(
-                    "An error occurred while fetching the rarity list. Please try again later.",
-                    ephemeral=True
-                )
-            except Exception as followup_error:
-                log.error(f"Failed to send error message to user: {followup_error}")
+        except Exception:
+            log.exception("Error building rarity list")
+            raise
