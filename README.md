@@ -28,7 +28,7 @@ Add the following configuration:
 
 ```toml
 [[ballsdex.packages]]
-location = "git+https://github.com/MapsDex-Team/BallsDex-Rarity-Pack.git@0.0.4#master"
+location = "git+https://github.com/MapsDex-Team/BallsDex-Rarity-Pack.git@0.0.5#master"
 path = "rarity"
 enabled = true
 ```
@@ -44,7 +44,7 @@ enabled = true
 
 # Rarity Package
 [[ballsdex.packages]]
-location = "git+https://github.com/MapsDex-Team/BallsDex-Rarity-Pack.git@0.0.4#master"
+location = "git+https://github.com/MapsDex-Team/BallsDex-Rarity-Pack.git@0.0.5#master"
 path = "rarity"
 enabled = true
 ```
