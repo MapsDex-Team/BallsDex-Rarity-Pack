@@ -19,7 +19,6 @@ log = logging.getLogger("ballsdex.packages.rarity")
 ITEMS_PER_PAGE = 2 # How many tiers are shown on a page
 # INTEGER
 
-
 class RarityView(discord.ui.LayoutView):
     """A simple embed paginator for Discord."""
 
@@ -346,12 +345,6 @@ class Rarity(commands.Cog):
 
             await self._send_text_menu(interaction, balls_rarity_list_title, all_entries)
 
-        except Exception as e:
-            log.error(f"Error in rarity command: {e}", exc_info=True)
-            try:
-                await interaction.followup.send(
-                    "An error occurred while fetching the rarity list. Please try again later.",
-                    ephemeral=True
-                )
-            except Exception as followup_error:
-                log.error(f"Failed to send error message to user: {followup_error}")
+        except Exception:
+            log.exception("Error building rarity list")
+            raise
