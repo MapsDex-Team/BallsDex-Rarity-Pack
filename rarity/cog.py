@@ -19,7 +19,6 @@ log = logging.getLogger("ballsdex.packages.rarity")
 ITEMS_PER_PAGE = 2 # How many tiers are shown on a page
 # INTEGER
 
-
 class RarityView(discord.ui.LayoutView):
     """A simple embed paginator for Discord."""
 
