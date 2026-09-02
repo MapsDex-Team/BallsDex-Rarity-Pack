@@ -243,23 +243,19 @@ class Rarity(commands.Cog):
                 )
                 return
 
-            rarities = [c.rarity for c in enabled_collectibles]
-            min_rarity = min(rarities) if rarities else 1.0
-            max_rarity = max(rarities) if rarities else 1.0
+            sorted_collectibles = sorted(enabled_collectibles, key=lambda c: c.rarity)
 
-            if max_rarity > min_rarity:
-                multiplier = 99.0 / (max_rarity - min_rarity)
-            else:
-                multiplier = 1.0
+            rarity_groups: dict[float, list] = {}
+            for c in sorted_collectibles:
+                rarity_groups.setdefault(c.rarity, []).append(c)
 
-            rarity_to_collectibles = {}
-            for c in enabled_collectibles:
-                if max_rarity > min_rarity:
-                    tier_num = int((c.rarity - min_rarity) * multiplier + 1.5)
-                else:
-                    tier_num = 1
-                tier_num = max(1, tier_num)
-                rarity_to_collectibles.setdefault(tier_num, []).append(c)
+            rarity_to_tier: dict[float, int] = {}
+            rarity_to_collectibles: dict[int, list] = {}
+            i = 1
+            for rarity_value, group in rarity_groups.items():
+                rarity_to_tier[rarity_value] = i
+                rarity_to_collectibles[i] = group
+                i += len(group)
 
             if countryball:
                 target_ball = countryball
@@ -270,11 +266,7 @@ class Rarity(commands.Cog):
                     )
                     return
 
-                if max_rarity > min_rarity:
-                    tier_num = int((target_ball.rarity - min_rarity) * multiplier + 1.5)
-                else:
-                    tier_num = 1
-                tier_num = max(1, tier_num)
+                tier_num = rarity_to_tier.get(target_ball.rarity, 1)
                 collectible_name = f"\u200b ⋄ {self.bot.get_emoji(target_ball.emoji_id) or 'N/A'} {target_ball.country}"
 
                 text = f"# {balls_rarity_list_title}\n### ∥ T{tier_num}\n{collectible_name}\n"
